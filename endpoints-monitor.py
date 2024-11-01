@@ -92,11 +92,71 @@ def extract_endpoints_from_js(js_content: str) -> list[str]:
     # Return the found endpoints
     return endpoints
 
-def write_endpoints_to_file(endpoints: dict[str, list[str]] , output_file: str) -> None:
+def diff_endpoints(old_endpoints: dict[str, list[str]], new_endpoints: dict[str, list[str]]) -> dict[str, list[str]]:
+    # Find the differences between the old and new endpoints
+    diff = {}
+    for category, new_list in new_endpoints.items():
+        old_list = old_endpoints.get(category, [])
+        # Find the endpoints that are in the new list but not in the old list
+        added = list(set(new_list) - set(old_list))
+        if added:
+            diff[category] = added
+    return diff
+    
+def notify_discord_webhook(webhook_url: str, new_endpoints: dict[str, list[str]], latest_endpoints_file: str, target_hostname: str) -> None:
+    diff = diff_endpoints(read_endpoints_from_file(latest_endpoints_file), new_endpoints)
+    # Prepare the payload for the Discord webhook
+    fields = []
+    for category, endpoints in diff.items():
+        fields.append({"name": category, "value": "\n".join(endpoints)})
+    payload = {"content": "", "embeds": [{
+        "title": f"New Endpoints Found - {target_hostname}",
+         "fields": fields
+    }]}
+    try:
+        # Send a POST request to the Discord webhook URL
+        response = requests.post(webhook_url, headers={'Content-Type': 'application/json'},json=payload)
+        response.raise_for_status()
+        return response.text
+    except requests.RequestException as e:
+        print(f"Error while sending a notification to Discord: {e}")
+        return ""
+
+
+def read_endpoints_from_file(file: str) -> dict[str, list[str]]:
+    # Read existing content if the file exists
+    try:
+        with open(file, 'r') as f:
+            file_content = f.read()
+            # Extract categories and endpoints from the file content
+            js_categories = re.findall(r"\[(.*)\]:", file_content)
+            splitted_endpoints = re.split(r"\[.*\]:", file_content)[1:]
+            # Create a dictionary of categories and endpoints
+            old_endpoints = {}
+            for category, endpoints in zip(js_categories, splitted_endpoints):
+                old_endpoints[category] = endpoints.split("\n")[1:-1]
+            return old_endpoints
+    except Exception:
+        return {}
+
+def write_endpoints_to_file(new_endpoints: dict[str, list[str]] , output_file: str) -> None:
+    # Update the file with the new endpoints
+    old_endpoints = read_endpoints_from_file(output_file)
+    diff = diff_endpoints(old_endpoints, new_endpoints)
+    # Combine old and new endpoints by adding any new ones found in the diff
+    for category, new_list in diff.items():
+        if category in old_endpoints:
+            old_endpoints[category].extend(new_list)
+            # Remove duplicates
+            old_endpoints[category] = list(set(old_endpoints[category]))
+        else:
+            old_endpoints[category] = new_list
+
+    # Write the updated endpoints to the file
     with open(output_file, 'w') as f:
-        for filename in endpoints.keys():
-            f.write(f"[{filename}]: \n")
-            for endpoint in endpoints[filename]:
+        for category, endpoints_list in old_endpoints.items():
+            f.write(f"[{category}]:\n")
+            for endpoint in endpoints_list:
                 f.write(f"{endpoint}\n")
 
 
@@ -108,6 +168,8 @@ if __name__ == "__main__":
     parser.add_argument("-H", "--headers", help="Headers to include in requests (e.g., 'User-Agent: Mozilla/5.0 ; CSRF-Token: TOKEN')", default="")
     parser.add_argument("-c", "--cookies", help="Cookies to include in requests (e.g, 'cookie1=aaaaaa; cookie2=bbbbbbbb')", default="")
     parser.add_argument("-o", "--output", help="Output directory to save the found endpoints", default="endpoints-output/")
+    parser.add_argument("-w", "--discord-webhook", help="Discord webhook URL to notify about new endpoints", default="")
+
     args = parser.parse_args()
     # Remove trailing slash from the URL
     if args.url[-1:] == "/":
@@ -126,9 +188,17 @@ if __name__ == "__main__":
     endpoints = {}
     for js_file in js_files:
         js_content = get_file_content(js_file, headers, cookies)
-        filename = os.path.basename(urlparse(js_file).path)
+        filename = urlparse(js_file).path
         endpoints[filename] = extract_endpoints_from_js(js_content)
-        
-    # Save the found endpoints to a file
-    output_file = os.path.join(args.output, "latest_endpoints.txt")
-    write_endpoints_to_file(endpoints, output_file)
+
+    
+    # Update latest endpoints file
+    latest_endpoints_dir = os.path.join(args.output, "latest_endpoints")
+    os.makedirs(latest_endpoints_dir, exist_ok=True)
+    latest_endpoints_file = os.path.join(latest_endpoints_dir, f"{urlparse(args.url).hostname.replace(".", "-")}.txt")
+    write_endpoints_to_file(endpoints, latest_endpoints_file)
+    # Notify about new endpoints using Discord webhook if provided
+    if args.discord_webhook:
+        notify_discord_webhook(args.discord_webhook, endpoints, latest_endpoints_file, urlparse(args.url).hostname)
+
+
