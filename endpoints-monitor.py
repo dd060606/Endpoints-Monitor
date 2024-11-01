@@ -4,6 +4,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 import argparse
 import os
+from datetime import date
+
 
 # Regex pattern to capture various endpoint formats (based on https://github.com/GerbenJavado/LinkFinder)
 regex_str = r"""
@@ -105,6 +107,9 @@ def diff_endpoints(old_endpoints: dict[str, list[str]], new_endpoints: dict[str,
     
 def notify_discord_webhook(webhook_url: str, new_endpoints: dict[str, list[str]], latest_endpoints_file: str, target_hostname: str) -> None:
     diff = diff_endpoints(read_endpoints_from_file(latest_endpoints_file), new_endpoints)
+    # If there are no new endpoints, return early
+    if diff == {}:
+        return
     # Prepare the payload for the Discord webhook
     fields = []
     for category, endpoints in diff.items():
@@ -117,6 +122,7 @@ def notify_discord_webhook(webhook_url: str, new_endpoints: dict[str, list[str]]
         # Send a POST request to the Discord webhook URL
         response = requests.post(webhook_url, headers={'Content-Type': 'application/json'},json=payload)
         response.raise_for_status()
+        print(response.text)
         return response.text
     except requests.RequestException as e:
         print(f"Error while sending a notification to Discord: {e}")
@@ -159,11 +165,52 @@ def write_endpoints_to_file(new_endpoints: dict[str, list[str]] , output_file: s
             for endpoint in endpoints_list:
                 f.write(f"{endpoint}\n")
 
+def get_urls_from_input(input:str) -> list[str]:
+    # Check if the input is a URL
+    if urlparse(input).scheme:
+        return [input]
+    # Check if the input is a file
+    if os.path.isfile(input):
+        with open(input, 'r') as f:
+            return f.read().splitlines()
+    print("Invalid input provided. Please provide a valid URL or a file containing a list of URLs.")
+    return []
+
+def save_result_html(new_endpoints: dict[str, list[str]],latest_endpoints_file: str, output_path : str, hostname: str) -> None:
+    diff = diff_endpoints(read_endpoints_from_file(latest_endpoints_file), new_endpoints)
+    # If there are no new endpoints, return early
+    if diff == {}:
+        return
+    # Read the HTML template file
+    if not os.path.exists(output_path):
+        with open("result-template.html", 'r') as f:
+            html_content = f.read().replace("$HOSTNAME$", hostname)
+            with open(output_path, 'w') as f2:
+                f2.write(html_content)
+            # Don't add endpoints if the file was just created since were are monitoring for new endpoints
+            return
+    else:
+        with open(output_path, 'r') as f:
+            html_content = f.read()
+    
+    # Add the new endpoints to the HTML content
+    for category, endpoints in diff.items():
+        # Create a new HTML block for the new endpoints
+        html_new_endpoints = f"<div class='endpoints-box'><h3>{category} - {date.today()}</h3>"
+        for endpoint in endpoints:
+            html_new_endpoints += f"<p>{endpoint}</p>"
+        html_new_endpoints += "</div>"
+
+    html_content = html_content.replace("<!-- $CONTENT$ -->", f"<!-- $CONTENT$ -->\n{html_new_endpoints}")
+
+    # Write the updated HTML content to the output file
+    with open(output_path, 'w') as f:
+        f.write(html_content)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-u", "--url",
-                        help="URL to monitor",
+    parser.add_argument("-i", "--input",
+                        help="Input a: URL to extract endpoints from or a file containing a list of URLs",
                         required="True")
     parser.add_argument("-H", "--headers", help="Headers to include in requests (e.g., 'User-Agent: Mozilla/5.0 ; CSRF-Token: TOKEN')", default="")
     parser.add_argument("-c", "--cookies", help="Cookies to include in requests (e.g, 'cookie1=aaaaaa; cookie2=bbbbbbbb')", default="")
@@ -172,33 +219,39 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     # Remove trailing slash from the URL
-    if args.url[-1:] == "/":
-        args.url = args.url[:-1]
+    if args.input[-1:] == "/":
+        args.input = args.input[:-1]
+    
 
-    #Convert headers and cookies to a dictionary
+    # Convert headers and cookies to a dictionary
     headers = dict(x.split(': ') for x in args.headers.split('; ')) if args.headers else {}
     cookies = dict(x.split('=') for x in args.cookies.split('; ')) if args.cookies else {}
-    # Extract JavaScript files from the URL
-    js_files = extract_js_files(args.url, headers, cookies)
-
     # Create output directory
     os.makedirs(args.output, exist_ok=True)
-
-    # Extract endpoints from each JavaScript file
-    endpoints = {}
-    for js_file in js_files:
-        js_content = get_file_content(js_file, headers, cookies)
-        filename = urlparse(js_file).path
-        endpoints[filename] = extract_endpoints_from_js(js_content)
-
-    
-    # Update latest endpoints file
     latest_endpoints_dir = os.path.join(args.output, "latest_endpoints")
     os.makedirs(latest_endpoints_dir, exist_ok=True)
-    latest_endpoints_file = os.path.join(latest_endpoints_dir, f"{urlparse(args.url).hostname.replace(".", "-")}.txt")
-    write_endpoints_to_file(endpoints, latest_endpoints_file)
-    # Notify about new endpoints using Discord webhook if provided
-    if args.discord_webhook:
-        notify_discord_webhook(args.discord_webhook, endpoints, latest_endpoints_file, urlparse(args.url).hostname)
+
+    urls = get_urls_from_input(args.input)
+    # Monitor endpoints for each URL
+    for url in urls:
+        # Extract JavaScript files from the URL
+        js_files = extract_js_files(url, headers, cookies)
+
+        # Extract endpoints from each JavaScript file
+        endpoints = {}
+        for js_file in js_files:
+            js_content = get_file_content(js_file, headers, cookies)
+            filename = urlparse(js_file).path
+            endpoints[filename] = extract_endpoints_from_js(js_content)
+
+        hostname = urlparse(url).hostname
+        latest_endpoints_file = os.path.join(latest_endpoints_dir, f"{hostname.replace(".", "-")}.txt")
+        # Save new endpoints to the results file
+        save_result_html(endpoints, latest_endpoints_file, os.path.join(args.output, f"result-{hostname.replace(".", "-")}.html"), hostname)
+        # Notify about new endpoints using Discord webhook if provided
+        if args.discord_webhook and os.path.exists(latest_endpoints_file):
+            notify_discord_webhook(args.discord_webhook, endpoints, latest_endpoints_file, hostname)
+        # Update latest endpoints file
+        write_endpoints_to_file(endpoints, latest_endpoints_file)
 
 
