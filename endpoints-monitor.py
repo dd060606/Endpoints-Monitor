@@ -112,11 +112,15 @@ def notify_discord_webhook(webhook_url: str, new_endpoints: dict[str, list[str]]
         return
     # Prepare the payload for the Discord webhook
     fields = []
-    for category, endpoints in diff.items():
-        fields.append({"name": category, "value": "\n".join(endpoints)})
+    for category in diff.keys():
+        fields.append({"name": category, "value": ""})
     payload = {"content": "", "embeds": [{
         "title": f"New Endpoints Found - {target_hostname}",
-         "fields": fields
+        "color":1683176,
+         "fields": fields,
+        "footer": {
+            "text": f"Check the results in the HTML file: {hostname.replace(".", "-")}.html",
+        }
     }]}
     try:
         # Send a POST request to the Discord webhook URL
