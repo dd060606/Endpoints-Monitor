@@ -44,3 +44,19 @@ To use this tool, you need Python 3.x installed on your machine.
 `python endpoints-monitor.py -i urls.txt -w https://discord.com/api/webhooks/{...} -f`
 
 `python endpoints-monitor.py -i urls.txt -w https://discord.com/api/webhooks/{...} -f -H 'User-Agent: BugBounty' -c 'token=aaaaa; cookie2=test'`
+
+### Automating with Cron Jobs
+
+To automate the execution of the Endpoints Monitor script on a regular schedule, you can set up a cron job on Unix-like systems (Linux or macOS). This is useful if you want to periodically scan JavaScript files for endpoint changes.
+
+1. Open the crontab editor:
+
+```bash
+crontab -e
+```
+
+2. Add a new cron job for running endpoints-monitor.py at a specific interval. For example, to run the script every hours, add the following line:
+
+```bash
+0 * * * * endpoints-monitor.py -i urls.txt -w https://discord.com/api/webhooks/{...} -f >/dev/null 2>&1
+```
