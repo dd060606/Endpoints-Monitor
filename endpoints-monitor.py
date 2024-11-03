@@ -192,7 +192,7 @@ def save_result_html(new_endpoints: dict[str, list[str]],latest_endpoints_file: 
         return
     # Read the HTML template file
     if not os.path.exists(output_path):
-        with open("result-template.html", 'r') as f:
+        with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "result-template.html"), 'r') as f:
             html_content = f.read().replace("$HOSTNAME$", hostname)
             with open(output_path, 'w') as f2:
                 f2.write(html_content)
@@ -229,7 +229,6 @@ if __name__ == "__main__":
 
 
     args = parser.parse_args()
-
     # Remove trailing slash from the URL
     if args.input[-1:] == "/":
         args.input = args.input[:-1]
