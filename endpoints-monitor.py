@@ -123,7 +123,7 @@ def notify_discord_webhook(webhook_url: str, new_endpoints: dict[str, list[str]]
         "color":1683176,
          "fields": fields,
         "footer": {
-            "text": f"Check the results in the HTML file: {hostname.replace(".", "-")}.html",
+            "text": f"Check the results in the HTML file: {target_hostname.replace(".", "-")}.html",
         }
     }]}
     try:
