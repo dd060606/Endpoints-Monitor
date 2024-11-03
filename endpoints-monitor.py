@@ -118,12 +118,13 @@ def notify_discord_webhook(webhook_url: str, new_endpoints: dict[str, list[str]]
     fields = []
     for category in diff.keys():
         fields.append({"name": category, "value": ""})
+    html_file = target_hostname.replace(".", "-")
     payload = {"content": "", "embeds": [{
         "title": f"New Endpoints Found - {target_hostname}",
         "color":1683176,
          "fields": fields,
         "footer": {
-            "text": f"Check the results in the HTML file: {target_hostname.replace(".", "-")}.html",
+            "text": f"Check the results in the HTML file: {html_file}.html",
         }
     }]}
     try:
@@ -256,9 +257,10 @@ if __name__ == "__main__":
             endpoints[filename] = extract_endpoints_from_js(js_content, args.filter)
 
         hostname = urlparse(url).hostname
-        latest_endpoints_file = os.path.join(latest_endpoints_dir, f"{hostname.replace(".", "-")}.txt")
+        file_hostname = hostname.replace(".", "-")
+        latest_endpoints_file = os.path.join(latest_endpoints_dir, f"{file_hostname}.txt")
         # Save new endpoints to the results file
-        save_result_html(endpoints, latest_endpoints_file, os.path.join(args.output, f"result-{hostname.replace(".", "-")}.html"), hostname)
+        save_result_html(endpoints, latest_endpoints_file, os.path.join(args.output, f"result-{file_hostname}.html"), hostname)
         # Notify about new endpoints using Discord webhook if provided
         if args.discord_webhook and os.path.exists(latest_endpoints_file):
             notify_discord_webhook(args.discord_webhook, endpoints, latest_endpoints_file, hostname)
