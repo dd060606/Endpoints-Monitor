@@ -98,31 +98,23 @@ def extract_endpoints_from_js(js_content: str, filter_enabled: bool = False) -> 
     # Return the found endpoints
     return endpoints
 
-def diff_endpoints(old_endpoints: dict[str, list[str]], new_endpoints: dict[str, list[str]]) -> dict[str, list[str]]:
-    # Find the differences between the old and new endpoints
-    diff = {}
-    for category, new_list in new_endpoints.items():
-        old_list = old_endpoints.get(category, [])
-        # Find the endpoints that are in the new list but not in the old list
-        added = list(set(new_list) - set(old_list))
-        if added:
-            diff[category] = added
-    return diff
+def diff_endpoints(old_endpoints: list[str], new_endpoints: list[str]) -> list[str]:
+    old_endpoints_set = set(old_endpoints)
+    new_endpoints_set = set(new_endpoints)
+    # Find the endpoints that are in the new list but not in the old list    
+    return list(new_endpoints_set - old_endpoints_set)
     
-def notify_discord_webhook(webhook_url: str, new_endpoints: dict[str, list[str]], latest_endpoints_file: str, target_hostname: str) -> None:
+def notify_discord_webhook(webhook_url: str, new_endpoints: list[str], latest_endpoints_file: str, target_hostname: str) -> None:
     diff = diff_endpoints(read_endpoints_from_file(latest_endpoints_file), new_endpoints)
     # If there are no new endpoints, return early
-    if diff == {}:
+    if len(diff) == 0:
         return
     # Prepare the payload for the Discord webhook
-    fields = []
-    for category in diff.keys():
-        fields.append({"name": category, "value": ""})
     html_file = target_hostname.replace(".", "-")
     payload = {"content": "", "embeds": [{
         "title": f"New Endpoints Found - {target_hostname}",
         "color":1683176,
-         "fields": fields,
+         "fields": {"name": "", "value": f"There are {len(diff)} new endpoints found"},
         "footer": {
             "text": f"Check the results in the HTML file: {html_file}.html",
         }
@@ -138,41 +130,28 @@ def notify_discord_webhook(webhook_url: str, new_endpoints: dict[str, list[str]]
         return ""
 
 
-def read_endpoints_from_file(file: str) -> dict[str, list[str]]:
-    # Read existing content if the file exists
+def read_endpoints_from_file(file: str) -> list[str]:
     try:
         with open(file, 'r') as f:
             file_content = f.read()
-            # Extract categories and endpoints from the file content
-            js_categories = re.findall(r"\[(.*)\]:", file_content)
-            splitted_endpoints = re.split(r"\[.*\]:", file_content)[1:]
-            # Create a dictionary of categories and endpoints
-            old_endpoints = {}
-            for category, endpoints in zip(js_categories, splitted_endpoints):
-                old_endpoints[category] = endpoints.split("\n")[1:-1]
-            return old_endpoints
+            # Split the file content into lines and filter out empty lines
+            endpoints = [line for line in file_content.split("\n") if line.strip()]
+            return endpoints
     except Exception:
-        return {}
+        return []
 
-def write_endpoints_to_file(new_endpoints: dict[str, list[str]] , output_file: str) -> None:
+def write_endpoints_to_file(new_endpoints: list[str], output_file: str) -> None:
     # Update the file with the new endpoints
     old_endpoints = read_endpoints_from_file(output_file)
     diff = diff_endpoints(old_endpoints, new_endpoints)
+    
     # Combine old and new endpoints by adding any new ones found in the diff
-    for category, new_list in diff.items():
-        if category in old_endpoints:
-            old_endpoints[category].extend(new_list)
-            # Remove duplicates
-            old_endpoints[category] = list(set(old_endpoints[category]))
-        else:
-            old_endpoints[category] = new_list
-
+    updated_endpoints = list(set(old_endpoints + diff))
+    
     # Write the updated endpoints to the file
     with open(output_file, 'w') as f:
-        for category, endpoints_list in old_endpoints.items():
-            f.write(f"[{category}]:\n")
-            for endpoint in endpoints_list:
-                f.write(f"{endpoint}\n")
+        for endpoint in updated_endpoints:
+            f.write(f"{endpoint}\n")
 
 def get_urls_from_input(input:str) -> list[str]:
     # Check if the input is a URL
@@ -185,10 +164,10 @@ def get_urls_from_input(input:str) -> list[str]:
     print("Invalid input provided. Please provide a valid URL or a file containing a list of URLs.")
     return []
 
-def save_result_html(new_endpoints: dict[str, list[str]],latest_endpoints_file: str, output_path : str, hostname: str) -> None:
+def save_result_html(new_endpoints: list[str],latest_endpoints_file: str, output_path : str, hostname: str) -> None:
     diff = diff_endpoints(read_endpoints_from_file(latest_endpoints_file), new_endpoints)
     # If there are no new endpoints, return early
-    if diff == {}:
+    if diff == []:
         return
     # Read the HTML template file
     if not os.path.exists(output_path):
@@ -202,13 +181,12 @@ def save_result_html(new_endpoints: dict[str, list[str]],latest_endpoints_file: 
         with open(output_path, 'r') as f:
             html_content = f.read()
     
-    # Add the new endpoints to the HTML content
-    for category, endpoints in diff.items():
-        # Create a new HTML block for the new endpoints
-        html_new_endpoints = f"<div class='endpoints-box'><h3>{category} - {date.today()}</h3>"
-        for endpoint in endpoints:
-            html_new_endpoints += f"<p>{endpoint}</p>"
-        html_new_endpoints += "</div>"
+ 
+    # Create a new HTML block for the new endpoints
+    html_new_endpoints = f"<div class='endpoints-box'><h3>{date.today()}</h3>"
+    for endpoint in diff:
+        html_new_endpoints += f"<p>{endpoint}</p>"
+    html_new_endpoints += "</div>"
 
     html_content = html_content.replace("<!-- $CONTENT$ -->", f"<!-- $CONTENT$ -->\n{html_new_endpoints}")
 
@@ -249,11 +227,10 @@ if __name__ == "__main__":
         js_files = extract_js_files(url, headers, cookies)
 
         # Extract endpoints from each JavaScript file
-        endpoints = {}
+        endpoints = []
         for js_file in js_files:
             js_content = get_file_content(js_file, headers, cookies)
-            filename = urlparse(js_file).path
-            endpoints[filename] = extract_endpoints_from_js(js_content, args.filter)
+            endpoints += extract_endpoints_from_js(js_content, args.filter)
 
         hostname = urlparse(url).hostname
         file_hostname = hostname.replace(".", "-")
